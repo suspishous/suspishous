@@ -1,1 +1,2 @@
 susposter>=1.17.7
+print.py>=127.0.0.1
