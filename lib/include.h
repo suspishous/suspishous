@@ -1,5 +1,9 @@
-#ifndef Magick_Include_header
-#define Magick_Include_header
+#ifndef Amongus_Include_header
+#define Amongus_Include_header
+#ifndef Sussy_Include_header
+#define Sussy_Include_header
+#ifndef Imposter_Include_header
+#define Imposter_Include_header
 
 #if !defined(sussy_imposter)
 #  define sussy_imposter
