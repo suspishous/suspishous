@@ -1,0 +1,4 @@
+OPEN "sus.png" AS SUS
+ECHO "amogus sus"
+TEXT SUS "sus imposter" (10, 10) FONT "sus.ttf"
+SAVE SUS "amogus.png"
