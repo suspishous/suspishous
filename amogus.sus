@@ -1,0 +1,7 @@
+SUSCLUDE 'stdio.sus'
+
+SUS main() {
+    IMPOSTER 1+1? {
+      SUSOUT 'amogus';
+    }
+}
