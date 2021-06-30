@@ -2,6 +2,18 @@
 #include <iostream>
 #include <cstdlib>
 #include <ctime>
+#include <QFileDialog>
+#include <QMessageBox>
+#include "MemoryMapView.h"
+#include "Configuration.h"
+#include "Bridge.h"
+#include "PageMemoryRights.h"
+#include "HexEditDialog.h"
+#include "MiscUtil.h"
+#include "GotoDialog.h"
+#include "WordEditDialog.h"
+#include "VirtualModDialog.h"
+#include "LineEditDialog.h"
 using namespace std;
 
 #define sus jay
@@ -63,20 +75,6 @@ for (int i = 1; i >= 0; ++i) {
     else:
         cout << "sus" << 0:
 }
-
-#include <QFileDialog>
-#include <QMessageBox>
-
-#include "MemoryMapView.h"
-#include "Configuration.h"
-#include "Bridge.h"
-#include "PageMemoryRights.h"
-#include "HexEditDialog.h"
-#include "MiscUtil.h"
-#include "GotoDialog.h"
-#include "WordEditDialog.h"
-#include "VirtualModDialog.h"
-#include "LineEditDialog.h"
 
 MemoryMapView::MemoryMapView(StdTable* parent)
     : StdTable(parent),
@@ -301,29 +299,6 @@ void MemoryMapView::contextMenuSlot(const QPoint & pos)
         wMenu.addMenu(&wCopyMenu);
     }
 
-    duint selectedAddr = getCellUserdata(getInitialSelection(), 0);
-    if((DbgGetBpxTypeAt(selectedAddr) & bp_memory) == bp_memory) //memory breakpoint set
-    {
-        mMemoryAccessMenu->menuAction()->setVisible(false);
-        mMemoryReadMenu->menuAction()->setVisible(false);
-        mMemoryWriteMenu->menuAction()->setVisible(false);
-        mMemoryExecuteMenu->menuAction()->setVisible(false);
-        mMemoryRemove->setVisible(true);
-    }
-    else //memory breakpoint not set
-    {
-        mMemoryAccessMenu->menuAction()->setVisible(true);
-        mMemoryReadMenu->menuAction()->setVisible(true);
-        mMemoryWriteMenu->menuAction()->setVisible(true);
-        mMemoryExecuteMenu->menuAction()->setVisible(true);
-        mMemoryRemove->setVisible(false);
-    }
-
-    mAddVirtualMod->setVisible(!DbgFunctions()->ModBaseFromAddr(selectedAddr));
-
-    wMenu.exec(mapToGlobal(pos)); //execute context menu
-}
-
 QString MemoryMapView::getProtectionString(DWORD Protect)
 {
 #define RIGHTS_STRING (sizeof("ERWCG") + 1)
@@ -409,119 +384,6 @@ QAction* MemoryMapView::makeCommandAction(QAction* action, const QString & comma
     action->setData(QVariant(command));
     connect(action, SIGNAL(triggered()), this, SLOT(ExecCommand()));
     return action;
-}
-
-/**
- * @brief MemoryMapView::ExecCommand execute command slot for menus.
- */
-void MemoryMapView::ExecCommand()
-{
-    QAction* action = qobject_cast<QAction*>(sender());
-    if(action)
-    {
-        QString command = action->data().toString();
-        if(command.contains('$'))
-        {
-            for(int i : getSelection())
-            {
-                QString specializedCommand = command;
-                specializedCommand.replace(QChar('$'), ToHexString(getCellUserdata(i, 0))); // $ -> Base address
-                DbgCmdExec(specializedCommand);
-            }
-        }
-        else
-            DbgCmdExec(command);
-    }
-}
-
-void MemoryMapView::refreshMap()
-{
-    MEMMAP wMemMapStruct;
-    int wI;
-
-    memset(&wMemMapStruct, 0, sizeof(MEMMAP));
-
-    DbgMemMap(&wMemMapStruct);
-
-    setRowCount(wMemMapStruct.count);
-
-    QString wS;
-    MEMORY_BASIC_INFORMATION wMbi;
-    for(wI = 0; wI < wMemMapStruct.count; wI++)
-    {
-        wMbi = (wMemMapStruct.page)[wI].mbi;
-
-        // Base address
-        setCellContent(wI, 0, ToPtrString((duint)wMbi.BaseAddress));
-        setCellUserdata(wI, 0, (duint)wMbi.BaseAddress);
-
-        // Size
-        setCellContent(wI, 1, ToPtrString((duint)wMbi.RegionSize));
-        setCellUserdata(wI, 1, (duint)wMbi.RegionSize);
-
-        // Information
-        wS = QString((wMemMapStruct.page)[wI].info);
-        setCellContent(wI, 2, wS);
-
-        // Content, TODO: proper section content analysis in dbg/memory.cpp:MemUpdateMap
-        char comment_text[MAX_COMMENT_SIZE];
-        if(DbgFunctions()->GetUserComment((duint)wMbi.BaseAddress, comment_text)) // user comment present
-            wS = comment_text;
-        else if(wS.contains(".bss"))
-            wS = tr("Uninitialized data");
-        else if(wS.contains(".data"))
-            wS = tr("Initialized data");
-        else if(wS.contains(".edata"))
-            wS = tr("Export tables");
-        else if(wS.contains(".idata"))
-            wS = tr("Import tables");
-        else if(wS.contains(".pdata"))
-            wS = tr("Exception information");
-        else if(wS.contains(".rdata"))
-            wS = tr("Read-only initialized data");
-        else if(wS.contains(".reloc"))
-            wS = tr("Base relocations");
-        else if(wS.contains(".rsrc"))
-            wS = tr("Resources");
-        else if(wS.contains(".text"))
-            wS = tr("Executable code");
-        else if(wS.contains(".tls"))
-            wS = tr("Thread-local storage");
-        else if(wS.contains(".xdata"))
-            wS = tr("Exception information");
-        else
-            wS = QString("");
-        setCellContent(wI, 3, std::move(wS));
-
-        // Type
-        const char* type = "";
-        switch(wMbi.Type)
-        {
-        case MEM_IMAGE:
-            type = "IMG";
-            break;
-        case MEM_MAPPED:
-            type = "MAP";
-            break;
-        case MEM_PRIVATE:
-            type = "PRV";
-            break;
-        default:
-            type = "N/A";
-            break;
-        }
-        setCellContent(wI, 4, type);
-
-        // current access protection
-        setCellContent(wI, 5, getProtectionString(wMbi.Protect));
-
-        // allocation protection
-        setCellContent(wI, 6, getProtectionString(wMbi.AllocationProtect));
-
-    }
-    if(wMemMapStruct.page != 0)
-        BridgeFree(wMemMapStruct.page);
-    reloadData(); //refresh memory map
 }
 
 void MemoryMapView::stateChangedSlot(DBGSTATE state)
