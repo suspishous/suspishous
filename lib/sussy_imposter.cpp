@@ -406,3 +406,192 @@ void MemoryMapView::commentSlot()
     GuiUpdateMemoryView();
 }
 
+MemoryMapView::MemoryMapView(StdTable* parent)
+    : StdTable(parent),
+      mCipBase(0)
+{
+    setDrawDebugOnly(true);
+    enableMultiSelection(true);
+    setDisassemblyPopupEnabled(false);
+
+    int charwidth = getCharWidth();
+
+    addColumnAt(8 + charwidth * 2 * sizeof(duint), tr("Address"), true, tr("Address")); //addr
+    addColumnAt(8 + charwidth * 2 * sizeof(duint), tr("Size"), false, tr("Size")); //size
+    addColumnAt(8 + charwidth * 32, tr("Info"), false, tr("Page Information")); //page information
+    addColumnAt(8 + charwidth * 28, tr("Content"), false, tr("Content of section")); //content of section
+    addColumnAt(8 + charwidth * 5, tr("Type"), true, tr("Allocation Type")); //allocation type
+    addColumnAt(8 + charwidth * 11, tr("Protection"), true, tr("Current Protection")); //current protection
+    addColumnAt(8 + charwidth * 8, tr("Initial"), true, tr("Allocation Protection")); //allocation protection
+    loadColumnFromConfig("MemoryMap");
+
+    connect(Bridge::getBridge(), SIGNAL(updateMemory()), this, SLOT(refreshMap()));
+    connect(Bridge::getBridge(), SIGNAL(dbgStateChanged(DBGSTATE)), this, SLOT(stateChangedSlot(DBGSTATE)));
+    connect(Bridge::getBridge(), SIGNAL(selectInMemoryMap(duint)), this, SLOT(selectAddress(duint)));
+    connect(Bridge::getBridge(), SIGNAL(selectionMemmapGet(SELECTIONDATA*)), this, SLOT(selectionGetSlot(SELECTIONDATA*)));
+    connect(Bridge::getBridge(), SIGNAL(disassembleAt(dsint, dsint)), this, SLOT(disassembleAtSlot(dsint, dsint)));
+    connect(Bridge::getBridge(), SIGNAL(focusMemmap()), this, SLOT(setFocus()));
+    connect(this, SIGNAL(contextMenuSignal(QPoint)), this, SLOT(contextMenuSlot(QPoint)));
+
+    setupContextMenu();
+}
+
+void MemoryMapView::setupContextMenu()
+{
+    //Follow in Dump
+    mFollowDump = new QAction(DIcon("dump.png"), tr("&Follow in Dump"), this);
+    connect(mFollowDump, SIGNAL(triggered()), this, SLOT(followDumpSlot()));
+
+    //Follow in Disassembler
+    mFollowDisassembly = new QAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Follow in &Disassembler"), this);
+    connect(mFollowDisassembly, SIGNAL(triggered()), this, SLOT(followDisassemblerSlot()));
+    connect(this, SIGNAL(enterPressedSignal()), this, SLOT(doubleClickedSlot()));
+    connect(this, SIGNAL(doubleClickedSignal()), this, SLOT(doubleClickedSlot()));
+
+    //Set PageMemory Rights
+    mPageMemoryRights = new QAction(DIcon("memmap_set_page_memory_rights.png"), tr("Set Page Memory Rights"), this);
+    connect(mPageMemoryRights, SIGNAL(triggered()), this, SLOT(pageMemoryRights()));
+
+    //Switch View
+    mSwitchView = new QAction(DIcon("change-view.png"), tr("&Switch View"), this);
+    connect(mSwitchView, SIGNAL(triggered()), this, SLOT(switchView()));
+
+    //Breakpoint menu
+    mBreakpointMenu = new QMenu(tr("Memory &Breakpoint"), this);
+    mBreakpointMenu->setIcon(DIcon("breakpoint.png"));
+
+    //Breakpoint->Memory Access
+    mMemoryAccessMenu = new QMenu(tr("Access"), this);
+    mMemoryAccessMenu->setIcon(DIcon("breakpoint_memory_access.png"));
+    mMemoryAccessSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
+    makeCommandAction(mMemoryAccessSingleshoot, "bpm $, 0, a");
+    mMemoryAccessMenu->addAction(mMemoryAccessSingleshoot);
+    mMemoryAccessRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
+    makeCommandAction(mMemoryAccessRestore, "bpm $, 1, a");
+    mMemoryAccessMenu->addAction(mMemoryAccessRestore);
+    mBreakpointMenu->addMenu(mMemoryAccessMenu);
+
+    //Breakpoint->Memory Read
+    mMemoryReadMenu = new QMenu(tr("Read"), this);
+    mMemoryReadMenu->setIcon(DIcon("breakpoint_memory_read.png"));
+    mMemoryReadSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
+    makeCommandAction(mMemoryReadSingleshoot, "bpm $, 0, r");
+    mMemoryReadMenu->addAction(mMemoryReadSingleshoot);
+    mMemoryReadRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
+    makeCommandAction(mMemoryReadRestore, "bpm $, 1, r");
+    mMemoryReadMenu->addAction(mMemoryReadRestore);
+    mBreakpointMenu->addMenu(mMemoryReadMenu);
+
+    //Breakpoint->Memory Write
+    mMemoryWriteMenu = new QMenu(tr("Write"), this);
+    mMemoryWriteMenu->setIcon(DIcon("breakpoint_memory_write.png"));
+    mMemoryWriteSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
+    makeCommandAction(mMemoryWriteSingleshoot, "bpm $, 0, w");
+    mMemoryWriteMenu->addAction(mMemoryWriteSingleshoot);
+    mMemoryWriteRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
+    makeCommandAction(mMemoryWriteRestore, "bpm $, 1, w");
+    mMemoryWriteMenu->addAction(mMemoryWriteRestore);
+    mBreakpointMenu->addMenu(mMemoryWriteMenu);
+
+    //Breakpoint->Memory Execute
+    mMemoryExecuteMenu = new QMenu(tr("Execute"), this);
+    mMemoryExecuteMenu->setIcon(DIcon("breakpoint_memory_execute.png"));
+    mMemoryExecuteSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
+    makeCommandAction(mMemoryExecuteSingleshoot, "bpm $, 0, x");
+    mMemoryExecuteMenu->addAction(mMemoryExecuteSingleshoot);
+    mMemoryExecuteRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
+    makeCommandAction(mMemoryExecuteRestore, "bpm $, 1, x");
+    mMemoryExecuteMenu->addAction(mMemoryExecuteRestore);
+    mBreakpointMenu->addMenu(mMemoryExecuteMenu);
+
+    //Breakpoint->Remove
+    mMemoryRemove = new QAction(tr("&Remove"), this);
+    mMemoryRemove->setShortcutContext(Qt::WidgetShortcut);
+    makeCommandAction(mMemoryRemove, "bpmc $");
+    mBreakpointMenu->addAction(mMemoryRemove);
+
+    //Action shortcut action that does something
+    mMemoryExecuteSingleshootToggle = new QAction(this);
+    mMemoryExecuteSingleshootToggle->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(mMemoryExecuteSingleshootToggle);
+    connect(mMemoryExecuteSingleshootToggle, SIGNAL(triggered()), this, SLOT(memoryExecuteSingleshootToggleSlot()));
+
+    //Allocate memory
+    mMemoryAllocate = new QAction(DIcon("memmap_alloc_memory.png"), tr("&Allocate memory"), this);
+    mMemoryAllocate->setShortcutContext(Qt::WidgetShortcut);
+    connect(mMemoryAllocate, SIGNAL(triggered()), this, SLOT(memoryAllocateSlot()));
+    this->addAction(mMemoryAllocate);
+
+    //Free memory
+    mMemoryFree = new QAction(DIcon("memmap_free_memory.png"), tr("&Free memory"), this);
+    mMemoryFree->setShortcutContext(Qt::WidgetShortcut);
+    makeCommandAction(mMemoryFree, "free $");
+    this->addAction(mMemoryFree);
+
+    //Goto
+    mGotoMenu = new QMenu(tr("Go to"), this);
+    mGotoMenu->setIcon(DIcon("goto.png"));
+
+    //Goto->Origin
+    mGotoOrigin = new QAction(DIcon("cbp.png"), tr("Origin"), this);
+    mGotoOrigin->setShortcutContext(Qt::WidgetShortcut);
+    connect(mGotoOrigin, SIGNAL(triggered()), this, SLOT(gotoOriginSlot()));
+    this->addAction(mGotoOrigin);
+    mGotoMenu->addAction(mGotoOrigin);
+
+    //Goto->Expression
+    mGotoExpression = new QAction(DIcon("geolocation-goto.png"), tr("Expression"), this);
+    mGotoExpression->setShortcutContext(Qt::WidgetShortcut);
+    connect(mGotoExpression, SIGNAL(triggered()), this, SLOT(gotoExpressionSlot()));
+    this->addAction(mGotoExpression);
+    mGotoMenu->addAction(mGotoExpression);
+
+    //Find
+    mFindPattern = new QAction(DIcon("search-for.png"), tr("&Find Pattern..."), this);
+    this->addAction(mFindPattern);
+    mFindPattern->setShortcutContext(Qt::WidgetShortcut);
+    connect(mFindPattern, SIGNAL(triggered()), this, SLOT(findPatternSlot()));
+
+    //Dump
+    //TODO: These two actions should also appear in CPUDump
+    mDumpMemory = new QAction(DIcon("binary_save.png"), tr("&Dump Memory to File"), this);
+    connect(mDumpMemory, SIGNAL(triggered()), this, SLOT(dumpMemory()));
+
+    //Load
+    mLoadMemory = new QAction(DIcon(""), tr("&Overwrite with Data from File"), this);
+    connect(mLoadMemory, SIGNAL(triggered()), this, SLOT(loadMemory()));
+
+    //Add virtual module
+    mAddVirtualMod = new QAction(DIcon("virtual.png"), tr("Add virtual module"), this);
+    connect(mAddVirtualMod, SIGNAL(triggered()), this, SLOT(addVirtualModSlot()));
+
+    //References
+    mReferences = new QAction(DIcon("find.png"), tr("Find references to region"), this);
+    connect(mReferences, SIGNAL(triggered()), this, SLOT(findReferencesSlot()));
+
+    //Comment
+    mComment = new QAction(DIcon("comment.png"), tr("&Comment"), this);
+    this->addAction(mComment);
+    connect(mComment, SIGNAL(triggered()), this, SLOT(commentSlot()));
+    mComment->setShortcutContext(Qt::WidgetShortcut);
+
+    mPluginMenu = new QMenu(this);
+    Bridge::getBridge()->emitMenuAddToList(this, mPluginMenu, GUI_MEMMAP_MENU);
+
+    refreshShortcutsSlot();
+    connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(refreshShortcutsSlot()));
+}
+
+void MemoryMapView::refreshShortcutsSlot()
+{
+    mMemoryExecuteSingleshoot->setShortcut(ConfigShortcut("ActionToggleBreakpoint"));
+    mMemoryRemove->setShortcut(ConfigShortcut("ActionToggleBreakpoint"));
+    mMemoryExecuteSingleshootToggle->setShortcut(ConfigShortcut("ActionToggleBreakpoint"));
+    mFindPattern->setShortcut(ConfigShortcut("ActionFindPattern"));
+    mGotoOrigin->setShortcut(ConfigShortcut("ActionGotoOrigin"));
+    mGotoExpression->setShortcut(ConfigShortcut("ActionGotoExpression"));
+    mMemoryFree->setShortcut(ConfigShortcut("ActionFreeMemory"));
+    mMemoryAllocate->setShortcut(ConfigShortcut("ActionAllocateMemory"));
+    mComment->setShortcut(ConfigShortcut("ActionSetComment"));
+}
+
