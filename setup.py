@@ -13,5 +13,4 @@ setup(name='suspishous',
       include_package_data=True,
       packages=find_packages(),
       zip_safe=False,
-      python_requires='>=7.0'
       )
